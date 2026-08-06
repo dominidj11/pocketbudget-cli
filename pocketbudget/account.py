@@ -2,6 +2,10 @@
 
 from pocketbudget.exceptions import InsufficientFundsError
 
+VALID_CATEGORIES = frozenset(
+    {"Food", "Transport", "Utilities", "Entertainment", "Other"}
+)
+
 
 class Account:
     """Protected account balance with validated transactions."""
@@ -9,6 +13,8 @@ class Account:
     def __init__(self) -> None:
         self._balance = 0.0
         self._history: list[tuple[str, float]] = []
+        self._budgets: dict[str, float] = {}
+        self._category_spending: dict[str, float] = {}
 
     @property
     def balance(self) -> float:
@@ -20,15 +26,25 @@ class Account:
         """Read-only view of the transaction history."""
         return list(self._history)
 
+    @property
+    def budgets(self) -> dict[str, float]:
+        """Read-only view of the category budgets."""
+        return dict(self._budgets)
+
     def add_income(self, amount: float) -> None:
         """Add income to the balance after validating the amount."""
         self._validate_amount(amount)
         self._balance += amount
         self._history.append(("income", amount))
 
-    def add_expense(self, amount: float) -> None:
-        """Record an expense after validating the amount and balance."""
+    def add_expense(self, amount: float, category: str = "Other") -> str | None:
+        """Record an expense after validating the amount, category and balance.
+
+        Returns a budget warning when the expense exceeds the category's
+        remaining budget, otherwise None.
+        """
         self._validate_amount(amount)
+        self._validate_category(category)
         if amount > self._balance:
             raise InsufficientFundsError(
                 f"Expense of {amount:.2f} exceeds available balance of "
@@ -36,8 +52,44 @@ class Account:
             )
         self._balance -= amount
         self._history.append(("expense", amount))
+        self._category_spending[category] = (
+            self._category_spending.get(category, 0.0) + amount
+        )
+        return self._budget_warning(category, amount)
+
+    def set_budget(self, category: str, limit: float) -> None:
+        """Set the spending limit for a category."""
+        self._validate_category(category)
+        self._validate_amount(limit)
+        self._budgets[category] = limit
+
+    def remaining_budget(self, category: str) -> float | None:
+        """Remaining budget for a category, or None if no budget is set."""
+        self._validate_category(category)
+        limit = self._budgets.get(category)
+        if limit is None:
+            return None
+        spent = self._category_spending.get(category, 0.0)
+        return limit - spent
 
     @staticmethod
     def _validate_amount(amount: float) -> None:
         if amount <= 0:
             raise ValueError(f"Transaction amount must be positive, got {amount}")
+
+    @staticmethod
+    def _validate_category(category: str) -> None:
+        if category not in VALID_CATEGORIES:
+            raise ValueError(
+                f"Invalid category {category!r}; "
+                f"valid categories: {sorted(VALID_CATEGORIES)}"
+            )
+
+    def _budget_warning(self, category: str, amount: float) -> str | None:
+        remaining = self.remaining_budget(category)
+        if remaining is not None and amount > remaining:
+            return (
+                f"Budget exceeded for {category}: spent {amount:.2f}, "
+                f"only {remaining:.2f} left"
+            )
+        return None
