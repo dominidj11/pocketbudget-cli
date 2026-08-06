@@ -17,6 +17,7 @@ def save_account(account: Account, path: Path | str = BUDGET_FILE) -> None:
         "balance": account.balance,
         "history": [list(entry) for entry in account.history],
         "budgets": account.budgets,
+        "strict_budgets": account.strict_budgets,
         "category_spending": account.category_spending,
     }
     file_path = Path(path)
@@ -34,7 +35,7 @@ def load_account(path: Path | str = BUDGET_FILE) -> Account:
         return Account()
 
     data = _read_json(file_path)
-    balance, history, budgets, spending = _extract_data(data)
+    balance, history, budgets, strict_budgets, spending = _extract_data(data)
     account = _replay_history(history)
 
     if account.balance != balance:
@@ -42,7 +43,7 @@ def load_account(path: Path | str = BUDGET_FILE) -> Account:
             f"Saved balance {balance} does not match history sum {account.balance}"
         )
 
-    _restore_state(account, budgets, spending)
+    _restore_state(account, budgets, strict_budgets, spending)
     return account
 
 
@@ -55,13 +56,14 @@ def _read_json(file_path: Path) -> object:
 
 def _extract_data(
     data: object,
-) -> tuple[float, list[object], dict[Any, Any], dict[Any, Any]]:
+) -> tuple[float, list[object], dict[Any, Any], dict[Any, Any], dict[Any, Any]]:
     if not isinstance(data, dict):
         raise StorageError("Save file must contain a JSON object")
 
     balance = data.get("balance")
     history = data.get("history")
     budgets = data.get("budgets", {})
+    strict_budgets = data.get("strict_budgets", {})
     spending = data.get("category_spending", {})
 
     if not isinstance(history, list):
@@ -70,10 +72,12 @@ def _extract_data(
         raise StorageError("Save file balance must be a number")
     if not isinstance(budgets, dict):
         raise StorageError("Save file budgets must be an object")
+    if not isinstance(strict_budgets, dict):
+        raise StorageError("Save file strict_budgets must be an object")
     if not isinstance(spending, dict):
         raise StorageError("Save file category_spending must be an object")
 
-    return balance, history, budgets, spending
+    return balance, history, budgets, strict_budgets, spending
 
 
 def _replay_history(history: list[object]) -> Account:
@@ -95,11 +99,17 @@ def _replay_history(history: list[object]) -> Account:
 
 
 def _restore_state(
-    account: Account, budgets: dict[Any, Any], spending: dict[Any, Any]
+    account: Account,
+    budgets: dict[Any, Any],
+    strict_budgets: dict[Any, Any],
+    spending: dict[Any, Any],
 ) -> None:
     try:
         for category, limit in budgets.items():
-            account.set_budget(category, limit)
+            strict = strict_budgets.get(category, False)
+            if not isinstance(strict, bool):
+                raise ValueError(f"Strict flag for {category!r} must be a boolean")
+            account.set_budget(category, limit, strict=strict)
         account.restore_spending(spending)
     except (ValueError, TypeError) as exc:
         raise StorageError(f"Invalid budget state in save file: {exc}") from exc

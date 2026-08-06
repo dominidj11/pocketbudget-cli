@@ -1,6 +1,11 @@
 """Domain: budgeting rules and protected account state."""
 
-from pocketbudget.exceptions import InsufficientFundsError
+from pocketbudget.exceptions import (
+    BudgetExceededError,
+    InsufficientFundsError,
+    InvalidCategoryError,
+    InvalidTransactionError,
+)
 
 VALID_CATEGORIES = frozenset(
     {"Food", "Transport", "Utilities", "Entertainment", "Other"}
@@ -14,6 +19,7 @@ class Account:
         self._balance = 0.0
         self._history: list[tuple[str, float]] = []
         self._budgets: dict[str, float] = {}
+        self._strict_budgets: dict[str, bool] = {}
         self._category_spending: dict[str, float] = {}
 
     @property
@@ -30,6 +36,11 @@ class Account:
     def budgets(self) -> dict[str, float]:
         """Read-only view of the category budgets."""
         return dict(self._budgets)
+
+    @property
+    def strict_budgets(self) -> dict[str, bool]:
+        """Read-only view of which categories have strict budgets."""
+        return dict(self._strict_budgets)
 
     @property
     def category_spending(self) -> dict[str, float]:
@@ -55,6 +66,10 @@ class Account:
                 f"Expense of {amount:.2f} exceeds available balance of "
                 f"{self._balance:.2f}"
             )
+        if self._strict_budget_exceeded(category, amount):
+            raise BudgetExceededError(
+                f"Expense of {amount:.2f} exceeds the strict budget for {category}"
+            )
         self._balance -= amount
         self._history.append(("expense", amount))
         self._category_spending[category] = (
@@ -62,11 +77,12 @@ class Account:
         )
         return self._budget_warning(category, amount)
 
-    def set_budget(self, category: str, limit: float) -> None:
+    def set_budget(self, category: str, limit: float, strict: bool = False) -> None:
         """Set the spending limit for a category."""
         self._validate_category(category)
         self._validate_amount(limit)
         self._budgets[category] = limit
+        self._strict_budgets[category] = strict
 
     def remaining_budget(self, category: str) -> float | None:
         """Remaining budget for a category, or None if no budget is set."""
@@ -89,15 +105,23 @@ class Account:
     @staticmethod
     def _validate_amount(amount: float) -> None:
         if amount <= 0:
-            raise ValueError(f"Transaction amount must be positive, got {amount}")
+            raise InvalidTransactionError(
+                f"Transaction amount must be positive, got {amount}"
+            )
 
     @staticmethod
     def _validate_category(category: str) -> None:
         if category not in VALID_CATEGORIES:
-            raise ValueError(
+            raise InvalidCategoryError(
                 f"Invalid category {category!r}; "
                 f"valid categories: {sorted(VALID_CATEGORIES)}"
             )
+
+    def _strict_budget_exceeded(self, category: str, amount: float) -> bool:
+        if not self._strict_budgets.get(category, False):
+            return False
+        remaining = self.remaining_budget(category)
+        return remaining is not None and amount > remaining
 
     def _budget_warning(self, category: str, amount: float) -> str | None:
         remaining = self.remaining_budget(category)
