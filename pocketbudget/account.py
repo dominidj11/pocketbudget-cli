@@ -31,6 +31,11 @@ class Account:
         """Read-only view of the category budgets."""
         return dict(self._budgets)
 
+    @property
+    def category_spending(self) -> dict[str, float]:
+        """Read-only view of spending per category."""
+        return dict(self._category_spending)
+
     def add_income(self, amount: float) -> None:
         """Add income to the balance after validating the amount."""
         self._validate_amount(amount)
@@ -71,6 +76,15 @@ class Account:
             return None
         spent = self._category_spending.get(category, 0.0)
         return limit - spent
+
+    def restore_spending(self, spending: dict[str, float]) -> None:
+        """Restore persisted per-category spending after validation."""
+        self._category_spending.clear()
+        for category, amount in spending.items():
+            self._validate_category(category)
+            if amount < 0:
+                raise ValueError(f"Spending must be non-negative, got {amount}")
+            self._category_spending[category] = amount
 
     @staticmethod
     def _validate_amount(amount: float) -> None:
